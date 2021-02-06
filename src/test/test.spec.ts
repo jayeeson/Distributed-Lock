@@ -1,4 +1,4 @@
-import chai from 'chai';
+import chai, { expect } from 'chai';
 
 chai.should();
 
@@ -11,7 +11,7 @@ interface State {
 class LockMock {
   // how to ensure unique token id:
   // increment when token is expired/unlocked
-  state: State = { locked: false, holder: undefined, tokenId: 0 };
+  state: State = { locked: false, holder: undefined, tokenId: 1 };
   expiryTimer: NodeJS.Timeout | null = null;
 
   private expire = (tokenId: number) => {
@@ -19,9 +19,9 @@ class LockMock {
       return;
     }
     this.state = {
-      ...this.state,
       locked: false,
       holder: undefined,
+      tokenId: this.state.tokenId + 1,
     };
   };
 
@@ -66,7 +66,7 @@ class LockMock {
     }
 
     this.state = {
-      ...this.state,
+      tokenId: this.state.tokenId + 1,
       locked: false,
       holder: undefined,
     };
@@ -90,11 +90,25 @@ describe('testing LOCK', () => {
   it('should extend the lock duration if the same lockholder requests a lock', () => {
     const lockMock = new LockMock();
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const lockClient1 = lockMock.lock(1000, '1');
     const lockClient1Again = lockMock.lock(1000, '1');
 
     lockClient1Again.should.have.property('tokenId').eql(lockClient1.tokenId);
+  });
+
+  it('subsequent locking should increment tokenId', () => {
+    const lockMock = new LockMock();
+
+    const lockClient1 = lockMock.lock(20, '1');
+    lockMock.unlock(lockClient1.tokenId || 0);
+
+    const lockClient2 = lockMock.lock(20, '1');
+
+    expect(
+      lockClient1.tokenId &&
+        lockClient2.tokenId &&
+        lockClient2.tokenId > lockClient1.tokenId
+    ).to.eql(true);
   });
 });
 
@@ -102,7 +116,6 @@ describe('testing UNLOCK', () => {
   it('should unlock when requested', () => {
     const lockMock = new LockMock();
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const lockClient1 = lockMock.lock(1000, '1');
     lockMock.unlock(lockClient1.tokenId || 0);
 
