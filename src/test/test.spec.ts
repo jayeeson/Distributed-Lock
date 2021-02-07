@@ -1,159 +1,381 @@
-import chai, { expect } from 'chai';
+import chai, { assert, expect } from 'chai';
 
 chai.should();
 
 interface State {
   locked: boolean;
   holder: string | undefined;
-  tokenId: number;
+  version: number;
 }
 
-class LockMock {
-  // how to ensure unique token id:
-  // increment when token is expired/unlocked
-  state: State = { locked: false, holder: undefined, tokenId: 1 };
-  expiryTimer: NodeJS.Timeout | null = null;
+interface ILockDAO {
+  lock: (
+    uid: string,
+    keys: string[],
+    exp?: number
+  ) => { error?: any; tokens?: { key: string; version: number }[] };
+  unlock: (
+    uid: string,
+    keyTokenPairs: { key: string; version: number }[]
+  ) => void;
+  check: (keys: string[]) => { locked: boolean };
+}
 
-  private expire = (tokenId: number) => {
-    if (this.state.locked === false || tokenId !== this.state.tokenId) {
-      return;
-    }
-    this.state = {
-      locked: false,
-      holder: undefined,
-      tokenId: this.state.tokenId + 1,
-    };
+class IStateManager<T> {
+  protected state: T;
+
+  constructor(state: T) {
+    this.state = state;
+  }
+
+  set = (key: string, newState: State): void => {
+    throw new Error('abstract class, dont call');
   };
 
-  lock = (exp: number, uid: string) => {
-    if (this.state.locked === true) {
-      if (uid !== this.state.holder) {
-        return {
-          error: 'locked',
-        };
+  get = (key: string): State | undefined => {
+    throw new Error('abstract class, dont call');
+  };
+}
+
+class InMemoryStateManager extends IStateManager<Map<string, State>> {
+  set = (key: string, newState: State) => {
+    this.state.set(key, newState);
+  };
+
+  get = (key: string) => {
+    return this.state.get(key);
+  };
+}
+
+class InMemoryLockRepository implements ILockDAO {
+  defaultExp: number;
+  state: InMemoryStateManager;
+  expiryTimers = new Map<string, NodeJS.Timeout>();
+
+  constructor(state: InMemoryStateManager, defaultExp?: number) {
+    this.state = state;
+    this.defaultExp = defaultExp ?? 1000;
+  }
+
+  private expire = (holder: string, keys: string[]) => {
+    keys.map(key => {
+      const state = this.state.get(key);
+      if (state?.locked === false || holder !== state?.holder) {
+        return;
       }
 
-      // same client requesting lock extension; relock
-      if (this.expiryTimer) {
-        clearTimeout(this.expiryTimer);
+      this.state.set(key, {
+        locked: false,
+        holder: undefined,
+        version: state ? ++state.version : 1,
+      });
+    });
+  };
+
+  check = (keys: string[]) => {
+    const locked = keys.some(key => {
+      const state = this.state.get(key);
+      const locked = state ? state.locked : false;
+      return locked;
+    });
+
+    return { locked };
+  };
+
+  unlock = (uid: string, keyTokenPairs: { key: string; version: number }[]) => {
+    keyTokenPairs.forEach(pair => {
+      const state = this.state.get(pair.key);
+      if (
+        state?.locked === false || state ? state.version > pair.version : true
+      ) {
+        return;
       }
-    } else {
-      this.state = {
-        locked: true,
-        holder: uid,
-        tokenId: this.state.tokenId,
+
+      this.state.set(pair.key, {
+        version: state ? state.version + 1 : 1,
+        locked: false,
+        holder: undefined,
+      });
+    });
+  };
+
+  lock = (uid: string, keys: string[], exp?: number) => {
+    const extendTheseLocks = new Set<string>();
+
+    // validate
+    const allowLock = keys.every(key => {
+      const state = this.state.get(key);
+      const clientRequestingExtension = uid === state?.holder;
+      if (clientRequestingExtension) {
+        extendTheseLocks.add(key);
+      }
+
+      const isUnlocked = state ? !state.locked : true;
+      return isUnlocked || clientRequestingExtension;
+    });
+
+    if (!allowLock) {
+      return {
+        error: 'locked',
       };
     }
 
-    // set the expiry timer
-    this.expiryTimer = setTimeout(
-      tokenId => {
-        this.expire(tokenId);
-      },
-      exp,
-      this.state.tokenId
-    );
+    // same client requesting lock extension; relock
+    const extendedItemTokens = Array.from(extendTheseLocks).map(key => {
+      const timer = this.expiryTimers.get(key);
+      const state = this.state.get(key) as State; // we already know this state exists
+      if (timer) {
+        // token has not yet expired, don't need to update data
+        clearTimeout(timer);
+      } else {
+        // token has already expired, need to update data
+        this.state.set(key, {
+          ...state,
+          locked: true,
+          holder: uid,
+        });
+      }
+      return { key, version: state.version };
+    });
 
-    // return lock
-    return {
-      tokenId: this.state.tokenId,
-    };
+    const keysNotBeingExtended = keys.filter(key => !extendTheseLocks.has(key));
+
+    const notExtendedItemTokens = keysNotBeingExtended.map(key => {
+      const version = this.state.get(key)?.version || 1;
+      this.state.set(key, {
+        version,
+        locked: true,
+        holder: uid,
+      });
+      return { key, version };
+    });
+
+    // set the expiry timer for all keys
+    keys.forEach(key => {
+      const timeout = setTimeout(() => {
+        this.expire(uid, [key]);
+      }, exp ?? this.defaultExp);
+
+      this.expiryTimers.set(key, timeout);
+    });
+
+    return { tokens: [...extendedItemTokens, ...notExtendedItemTokens] };
   };
+}
 
-  unlock = (tokenId: number) => {
-    if (this.state.locked === false || this.state.tokenId > tokenId) {
-      return;
-    }
+class LockManager<T> implements ILockDAO {
+  repository: ILockDAO;
+  state: IStateManager<T>;
 
-    this.state = {
-      tokenId: this.state.tokenId + 1,
-      locked: false,
-      holder: undefined,
-    };
+  constructor(repository: ILockDAO, state: IStateManager<T>) {
+    this.repository = repository;
+    this.state = state;
+  }
+
+  lock = (uid: string, keys: string[], exp?: number | undefined) => {
+    return this.repository.lock(uid, keys, exp);
   };
-
-  check = () => {
-    return { locked: this.state.locked };
+  unlock = (uid: string, keyTokenPairs: { key: string; version: number }[]) => {
+    this.repository.unlock(uid, keyTokenPairs);
+  };
+  check = (keys: string[]) => {
+    return this.repository.check(keys);
   };
 }
 
 describe('testing LOCK', () => {
-  it('shouldnt get a lock when lock is already in use', () => {
-    const lockMock = new LockMock();
+  it('should get a lock on key when its unlocked', () => {
+    const state = new InMemoryStateManager(new Map<string, State>());
+    const lockRepository = new InMemoryLockRepository(state);
+    const lockManager = new LockManager(lockRepository, state);
 
-    lockMock.lock(1000, '1');
-    const lockClient2 = lockMock.lock(1000, '2');
+    const key = ['key1'];
+    const lockClient1 = lockManager.lock('1', key);
+
+    expect(lockClient1).to.deep.include({
+      tokens: [{ key: key[0], version: 1 }],
+    });
+  });
+
+  it('shouldnt get a lock when lock is already in use', () => {
+    const state = new InMemoryStateManager(new Map<string, State>());
+    const lockRepository = new InMemoryLockRepository(state);
+    const lockManager = new LockManager(lockRepository, state);
+
+    const key = ['key1'];
+    lockManager.lock('1', key);
+    const lockClient2 = lockManager.lock('2', key);
+
+    lockClient2.should.have.property('error');
+  });
+
+  it('shouldnt get a lock when one of two locks is already in use', () => {
+    const state = new InMemoryStateManager(new Map<string, State>());
+    const lockRepository = new InMemoryLockRepository(state);
+    const lockManager = new LockManager(lockRepository, state);
+
+    const key1 = ['key1'];
+    lockManager.lock('1', key1);
+    const lockClient2 = lockManager.lock('2', [...key1, 'key2']);
 
     lockClient2.should.have.property('error');
   });
 
   it('should extend the lock duration if the same lockholder requests a lock', () => {
-    const lockMock = new LockMock();
+    const state = new InMemoryStateManager(new Map<string, State>());
+    const lockRepository = new InMemoryLockRepository(state);
+    const lockManager = new LockManager(lockRepository, state);
 
-    const lockClient1 = lockMock.lock(1000, '1');
-    const lockClient1Again = lockMock.lock(1000, '1');
+    const key = ['key1'];
 
-    lockClient1Again.should.have.property('tokenId').eql(lockClient1.tokenId);
+    const lockClient1 = lockManager.lock('1', key);
+    const lockClient1Again = lockManager.lock('1', key);
+
+    lockClient1Again.tokens?.[0].should.have
+      .property('version')
+      .eql(lockClient1.tokens?.[0].version);
   });
 
-  it('subsequent locking should increment tokenId', () => {
-    const lockMock = new LockMock();
+  it('subsequent locking should increment version if different client', () => {
+    const state = new InMemoryStateManager(new Map<string, State>());
+    const lockRepository = new InMemoryLockRepository(state);
+    const lockManager = new LockManager(lockRepository, state);
 
-    const lockClient1 = lockMock.lock(20, '1');
-    lockMock.unlock(lockClient1.tokenId || 0);
+    const key = ['key1'];
+    const uid = '1';
 
-    const lockClient2 = lockMock.lock(20, '1');
+    const lockClient1 = lockManager.lock(uid, key, 20);
+    if (!lockClient1 || !lockClient1.tokens) {
+      return assert.fail('error locking');
+    }
+
+    lockManager.unlock(uid, lockClient1.tokens);
+
+    const lockClient2 = lockManager.lock('2', key, 20);
+
+    const client1Version = lockClient1.tokens[0].version;
+    const client2Version = lockClient2.tokens?.[0].version;
 
     expect(
-      lockClient1.tokenId &&
-        lockClient2.tokenId &&
-        lockClient2.tokenId > lockClient1.tokenId
+      client1Version && client2Version && client2Version > client1Version
     ).to.eql(true);
+  });
+
+  it('should increment version if same client requests resource after initial request has expired', done => {
+    const state = new InMemoryStateManager(new Map<string, State>());
+    const lockRepository = new InMemoryLockRepository(state);
+    const lockManager = new LockManager(lockRepository, state);
+
+    const key = ['key1'];
+    const uid = '1';
+    const exp = 20;
+
+    lockManager.lock(uid, key, exp);
+
+    setTimeout(() => {
+      const lockClient1Again = lockManager.lock(uid, key, exp);
+      expect(lockClient1Again).to.deep.include({
+        tokens: [{ key: key[0], version: 2 }],
+      });
+      done();
+    }, exp + 5);
+  });
+
+  it('client 2 should be able to lock a different key than client 1', () => {
+    const state = new InMemoryStateManager(new Map<string, State>());
+    const lockRepository = new InMemoryLockRepository(state);
+    const lockManager = new LockManager(lockRepository, state);
+
+    const client1 = {
+      uid: '1',
+      key: ['key1'],
+    };
+
+    const client2 = {
+      uid: '2',
+      key: ['key2'],
+    };
+
+    lockManager.lock(client1.uid, client1.key, 20);
+    const lockClient2 = lockManager.lock(client2.uid, client2.key);
+
+    lockClient2.should.have.property('tokens');
   });
 });
 
 describe('testing UNLOCK', () => {
   it('should unlock when requested', () => {
-    const lockMock = new LockMock();
+    const state = new InMemoryStateManager(new Map<string, State>());
+    const lockRepository = new InMemoryLockRepository(state);
+    const lockManager = new LockManager(lockRepository, state);
 
-    const lockClient1 = lockMock.lock(1000, '1');
-    lockMock.unlock(lockClient1.tokenId || 0);
+    const keys = ['key1'];
+    const uid = '1';
 
-    lockMock.state.locked.should.eql(false);
+    const lockClient1 = lockManager.lock(uid, keys);
+    if (!lockClient1 || !lockClient1.tokens) {
+      return assert.fail('error locking');
+    }
+    lockManager.unlock(uid, lockClient1.tokens);
+    lockManager.state.get(keys[0])?.locked.should.eql(false);
   });
 
   it('should unlock after expiry time', done => {
-    const lockMock = new LockMock();
+    const state = new InMemoryStateManager(new Map<string, State>());
+    const lockRepository = new InMemoryLockRepository(state);
+    const lockManager = new LockManager(lockRepository, state);
+
+    const keys = ['key1'];
+    const uid = '1';
     const expTime = 20;
 
-    const lockClient1 = lockMock.lock(expTime, '1');
+    const lockClient1 = lockManager.lock(uid, keys, expTime);
+    if (!lockClient1 || !lockClient1.tokens) {
+      return assert.fail('error locking');
+    }
 
-    setTimeout(() => {
-      lockMock.unlock(lockClient1.tokenId || 0);
-
-      lockMock.state.locked.should.eql(false);
-      done();
-    }, expTime + 5);
+    setTimeout(
+      tokens => {
+        lockManager.unlock(uid, tokens);
+        lockManager.state.get(keys[0])?.locked.should.eql(false);
+        done();
+      },
+      expTime + 5,
+      lockClient1.tokens
+    );
   });
 });
 
 describe('testing CHECK lock state', () => {
   it('should return locked when locked', () => {
-    const lockMock = new LockMock();
+    const state = new InMemoryStateManager(new Map<string, State>());
+    const lockRepository = new InMemoryLockRepository(state);
+    const lockManager = new LockManager(lockRepository, state);
 
-    lockMock.lock(1000, '1');
+    const keys = ['key1'];
 
-    const check = lockMock.check();
+    lockManager.lock('1', keys);
+
+    const check = lockManager.check(keys);
     check.should.have.property('locked').eql(true);
   });
 
   it('should return unlocked when unlocked', () => {
-    const lockMock = new LockMock();
+    const state = new InMemoryStateManager(new Map<string, State>());
+    const lockRepository = new InMemoryLockRepository(state);
+    const lockManager = new LockManager(lockRepository, state);
 
-    const lockClient1 = lockMock.lock(1000, '1');
-    lockMock.unlock(lockClient1.tokenId || 0);
+    const keys = ['key1'];
+    const uid = '1';
 
-    const check = lockMock.check();
+    const lockClient1 = lockManager.lock(uid, keys);
+    if (!lockClient1 || !lockClient1.tokens) {
+      return assert.fail('error locking');
+    }
+
+    lockManager.unlock(uid, lockClient1.tokens);
+
+    const check = lockManager.check(keys);
     check.should.have.property('locked').eql(false);
   });
 });
