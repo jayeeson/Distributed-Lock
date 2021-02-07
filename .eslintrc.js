@@ -13,6 +13,7 @@ module.exports = {
     'prefer-destructuring': ['error', { object: true, array: false }],
     '@typescript-eslint/no-explicit-any': 'off',
     'prettier/prettier': ['error', { singleQuote: true }],
+    '@typescript-eslint/explicit-module-boundary-types': false,
     quotes: ['error', 'single'],
     semi: ['error', 'always'],
   },
