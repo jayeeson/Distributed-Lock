@@ -133,6 +133,7 @@ describe('In Memory Lock Repository', () => {
       const keys = ['key1'];
       const uid = '1';
       const expTime = 20;
+      const waitTillExpiryTime = expTime + 100;
 
       const lockClient1 = await lockManager.lock(uid, keys, expTime);
       if (!lockClient1 || !lockClient1.tokens) {
@@ -140,21 +141,15 @@ describe('In Memory Lock Repository', () => {
       }
 
       const promise = new Promise<boolean | undefined>(resolve => {
-        setTimeout(
-          async tokens => {
-            const keyState = (lockManager.repository as InMemoryLockRepository)
-              .get(keys)
-              .get(keys[0])?.locked;
-            resolve(keyState);
-          },
-          expTime + 5,
-          lockClient1.tokens
-        );
-
-        expect(promise)
-          .to.eventually.have.property('locked')
-          ?.should.eql(false);
+        setTimeout(() => {
+          const keyState = (lockManager.repository as InMemoryLockRepository)
+            .get(keys)
+            .get(keys[0])?.locked;
+          resolve(keyState);
+        }, waitTillExpiryTime);
       });
+
+      return promise.should.eventually.equal(false);
     });
   });
 
@@ -179,8 +174,8 @@ describe('In Memory Lock Repository', () => {
 
       await lockManager.unlock(uid, lockClient1.tokens);
 
-      const check = lockManager.check(keys);
-      check.should.eventually.have.property('locked').eql(false);
+      const check = await lockManager.check(keys);
+      check.should.have.property('locked').eql(false);
     });
   });
 });

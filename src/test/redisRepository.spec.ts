@@ -7,18 +7,17 @@ import { newRedisClient } from '../helpers/redis';
 import { RedisClient } from 'redis';
 
 chai.use(chaiAsPromised);
-
 chai.should();
 
 const redisPrefix = 'test:';
-const { client }: { client: RedisClient } = newRedisClient();
-const lockRepository = new RedisLockRepository(client);
+const { client: redis }: { client: RedisClient } = newRedisClient();
+const lockRepository = new RedisLockRepository(redis);
 const lockManager = new LockManager(lockRepository);
 
 describe('Redis Lock Respository', () => {
   beforeEach(async () => {
     const keys = await new Promise<string[]>((resolve, reject) => {
-      client.keys(redisPrefix + '*', (err, reply) => {
+      redis.keys(redisPrefix + '*', (err, reply) => {
         if (err) {
           return reject(err);
         }
@@ -27,7 +26,7 @@ describe('Redis Lock Respository', () => {
     });
 
     await new Promise<number>((resolve, reject) => {
-      client.del(keys, (err, reply) => {
+      redis.del(keys, (err, reply) => {
         if (err) {
           reject(err);
         }
@@ -103,55 +102,50 @@ describe('Redis Lock Respository', () => {
       const key = [redisPrefix + 'key1'];
       const uid = '1';
 
-      new Promise<{
-        client1Version: number;
-        client2Version: number;
-      }>(async (resolve, reject) => {
-        const lockClient1 = await lockManager.lock(uid, key, 20);
-        if (!lockClient1 || !lockClient1.tokens) {
-          return reject('error locking');
-        }
+      const lockClient1 = await lockManager.lock(uid, key, 20);
+      if (!lockClient1 || !lockClient1.tokens) {
+        return assert.fail('error locking');
+      }
 
-        await lockManager.unlock(uid, lockClient1.tokens);
+      await lockManager.unlock(uid, lockClient1.tokens);
 
-        const lockClient2 = await lockManager.lock('2', key, 20);
-        if (!lockClient2 || !lockClient2.tokens) {
-          return reject('error locking second time');
-        }
+      const lockClient2 = await lockManager.lock('2', key, 20);
+      if (!lockClient2 || !lockClient2.tokens) {
+        return assert.fail('error locking second time');
+      }
 
-        const client1Version = lockClient1.tokens[0].version;
-        const client2Version = lockClient2.tokens?.[0].version;
+      const client1Version = lockClient1.tokens[0].version;
+      const client2Version = lockClient2.tokens?.[0].version;
 
-        resolve({ client1Version, client2Version });
-      })
-        .then(({ client1Version, client2Version }) => {
-          expect(client2Version < client1Version).to.eql(true);
-        })
-        .catch(reason => {
-          return assert.fail(reason);
-        });
+      expect(client2Version > client1Version).to.eql(true);
     });
 
     it('should increment version if same client requests resource after initial request has expired', async () => {
       const key = [redisPrefix + 'key1'];
       const uid = '1';
       const exp = 20;
+      const waitTillExpiryTime = exp + 20;
 
-      await lockManager.lock(uid, key, exp);
+      const firstLock = await lockManager.lock(uid, key, exp);
+      const firstLockVersion = firstLock.tokens?.[0].version;
 
-      const promise = new Promise((resolve, reject) => {
+      if (!firstLockVersion) {
+        return assert.fail('version field invalid for first lock');
+      }
+
+      const lockAgain = new Promise((resolve, reject) => {
         setTimeout(async () => {
           const lockClient1Again = await lockManager.lock(uid, key, exp);
           if (lockClient1Again.error) {
             reject(lockClient1Again);
           }
           resolve(lockClient1Again);
-        }, exp + 5);
+        }, waitTillExpiryTime);
       });
 
-      expect(promise).to.eventually.deep.include({
-        tokens: [{ key: key[0], version: 2 }],
-      });
+      return lockAgain.should.eventually.nested
+        .property('tokens[0].version')
+        .that.equals(firstLockVersion + 1);
     });
 
     it('client 2 should be able to lock a different key than client 1', async () => {
@@ -166,9 +160,9 @@ describe('Redis Lock Respository', () => {
       };
 
       await lockManager.lock(client1.uid, client1.key, 20);
-      const lockClient2 = await lockManager.lock(client2.uid, client2.key);
+      const lockClient2 = lockManager.lock(client2.uid, client2.key);
 
-      lockClient2.should.have.property('tokens');
+      return lockClient2.should.eventually.have.property('tokens');
     });
   });
 
@@ -177,45 +171,36 @@ describe('Redis Lock Respository', () => {
       const keys = [redisPrefix + 'key1'];
       const uid = '1';
 
-      try {
-        const lockClient1 = await lockManager.lock(uid, keys);
-        if (!lockClient1 || !lockClient1.tokens) {
-          return assert.fail('error locking');
-        }
-
-        const unlock = lockManager.unlock(uid, lockClient1.tokens);
-        unlock.should.eventually.have
-          .property('status')
-          .which.equals('success');
-      } catch (err) {
-        assert.fail(err);
+      const lockClient1 = await lockManager.lock(uid, keys);
+      if (!lockClient1 || !lockClient1.tokens) {
+        return assert.fail('error locking');
       }
+
+      const unlock = lockManager.unlock(uid, lockClient1.tokens);
+      unlock.should.eventually.have.property('status').which.equals('success');
     });
 
     it('should unlock after expiry time', async () => {
       const keys = [redisPrefix + 'key1'];
       const uid = '1';
-      const expTime = 20;
+      const exp = 20;
+      const waitTillExpTime = exp + 20;
 
-      const lockClient1 = await lockManager.lock(uid, keys, expTime);
+      const lockClient1 = await lockManager.lock(uid, keys, exp);
       if (!lockClient1 || !lockClient1.tokens) {
         return assert.fail('error locking');
       }
 
-      new Promise<boolean | undefined>(resolve => {
-        global.setTimeout(
-          async tokens => {
-            const keyState = (
-              await (lockManager.repository as RedisLockRepository).get(keys)
-            ).get(keys[0])?.locked;
-            resolve(keyState);
-          },
-          expTime + 5,
-          lockClient1.tokens
-        );
-      }).then(locked => {
-        locked?.should.eql(false);
+      const isLockedAfterExpiry = new Promise<boolean | undefined>(resolve => {
+        global.setTimeout(async () => {
+          const keyState = (
+            await (lockManager.repository as RedisLockRepository).get(keys)
+          ).get(keys[0])?.locked;
+          resolve(keyState);
+        }, waitTillExpTime);
       });
+
+      return isLockedAfterExpiry.should.eventually.eql(false);
     });
   });
 
@@ -242,9 +227,20 @@ describe('Redis Lock Respository', () => {
       await lockManager.unlock(uid, lockClient1.tokens);
 
       const check = lockManager.check(keys);
-      return check.should.eventually.have
-        .property('locked')
-        .which.equals(false);
+      return check.should.eventually.have.property('locked').that.equals(false);
+    });
+
+    it('testing throws', async () => {
+      const promise = new Promise<string>((resolve, reject) => {
+        if (1) {
+          reject('failed');
+        }
+        resolve('ok');
+      });
+
+      const pro = await promise;
+
+      return pro.should.eventually.equal('ok');
     });
   });
 });
