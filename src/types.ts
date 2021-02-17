@@ -1,7 +1,13 @@
 export interface State {
-  locked: boolean;
-  holder: string | undefined;
-  version: number;
+  [StateParams.locked]: boolean;
+  [StateParams.holder]: string | undefined;
+  [StateParams.version]: number;
+}
+
+export enum StateParams {
+  locked = 'locked',
+  holder = 'holder',
+  version = 'version',
 }
 
 export interface ILockDAO {
@@ -9,10 +15,20 @@ export interface ILockDAO {
     uid: string,
     keys: string[],
     exp?: number
-  ) => { error?: any; tokens?: { key: string; version: number }[] };
+  ) => Promise<{ error?: any; tokens?: { key: string; version: number }[] }>;
   unlock: (
     uid: string,
     keyTokenPairs: { key: string; version: number }[]
-  ) => void;
-  check: (keys: string[]) => { locked: boolean };
+  ) => Promise<{ status: string }>;
+  check: (keys: string[]) => Promise<{ locked: boolean }>;
+}
+
+export interface LockReturnType {
+  error?: any;
+  tokens?:
+    | {
+        key: string;
+        version: number;
+      }[]
+    | undefined;
 }

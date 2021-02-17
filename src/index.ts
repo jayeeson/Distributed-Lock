@@ -1,31 +1,29 @@
 import express from 'express';
-import mysql from 'mysql';
 import dotenv from 'dotenv';
+import { newRedisClient } from './helpers/redis';
+import { LockManager } from './LockManager';
+import { RedisLockRepository } from './RedisLockRepository';
 
 dotenv.config();
 
 const app = express();
-const hostname = process.env.HOST || 'localhost';
+export const redis = newRedisClient();
+
+const hostname = process.env.HOST ?? 'localhost';
 const port = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
-app.use(express.static('public'));
-
-const db = mysql.createConnection({
-  host: 'localhost',
-  //user:
-});
-
-////////////
-// ROUTES //
-////////////
-
-// GET HOMEPAGE ROUTE
 app.get('/', (req, res) => {
   app.render('index');
 });
 
-// POST ROUTE
-//app.post('')
+const redisRepository = new RedisLockRepository(redis.client);
+const lockManager = new LockManager(redisRepository);
+(async () => {
+  const a = await lockManager.lock('2', ['key1'], 20000);
+  if (a.tokens) {
+    setTimeout(tokens => lockManager.unlock('2', tokens), 5000, a.tokens);
+  }
+})();
 
 app.listen(port, hostname, () => {
   console.log(`Running server on port ${port}`);

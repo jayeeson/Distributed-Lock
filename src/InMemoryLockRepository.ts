@@ -1,64 +1,95 @@
-import { InMemoryStateManager } from "./InStateMemoryManager";
-import { ILockDAO, State } from "./types";
+import { ILockDAO, State, StateParams } from './types';
 
 export class InMemoryLockRepository implements ILockDAO {
+  private state = new Map<string, State>();
   defaultExp: number;
-  state: InMemoryStateManager;
   expiryTimers = new Map<string, NodeJS.Timeout>();
 
-  constructor(state: InMemoryStateManager, defaultExp?: number) {
-    this.state = state;
+  constructor(defaultExp?: number) {
     this.defaultExp = defaultExp ?? 1000;
   }
 
-  private expire = (holder: string, keys: string[]) => {
+  private set = (newStateMap: Map<string, State>) => {
+    const entries = Array.from(newStateMap.entries());
+    entries.forEach(entry => this.state.set(entry[0], entry[1]));
+  };
+
+  get = (keys: string[]) => {
+    const result = new Map<string, State | undefined>();
+    keys.forEach(key => result.set(key, this.state.get(key)));
+    return result;
+  };
+
+  private expire = async (holder: string, keys: string[]) => {
+    const keyStates = this.get(keys);
+    const newStateMap = new Map<string, State>();
+
     keys.map(key => {
-      const state = this.state.get(key);
+      const state = keyStates.get(key);
+
       if (state?.locked === false || holder !== state?.holder) {
         return;
       }
 
-      this.state.set(key, {
+      // add entry to new state map
+      newStateMap.set(key, {
         locked: false,
         holder: undefined,
-        version: state ? ++state.version : 1,
+        version: ++state.version,
       });
     });
+
+    // set all keys in one transaction
+    this.set(newStateMap);
   };
 
   check = (keys: string[]) => {
-    const locked = keys.some(key => {
-      const state = this.state.get(key);
-      const locked = state ? state.locked : false;
-      return locked;
+    const locked = keys.some(async key => {
+      const states = this.get(keys);
+      const stateArr = Array.from(states.entries());
+      const unlocked = stateArr.every(state => !state[1]?.locked);
+      return !unlocked;
     });
 
-    return { locked };
+    return Promise.resolve({ locked });
   };
 
-  unlock = (uid: string, keyTokenPairs: { key: string; version: number }[]) => {
+  unlock = async (
+    uid: string,
+    keyTokenPairs: { key: string; version: number }[]
+  ) => {
+    const keys = keyTokenPairs.map(pair => pair.key);
+    const states = this.get(keys);
+    const newStates = new Map<string, State>();
+
     keyTokenPairs.forEach(pair => {
-      const state = this.state.get(pair.key);
+      const state = states.get(pair.key);
       if (
-        state?.locked === false || state ? state.version > pair.version : true
+        state?.locked === false ||
+        (state ? state.version > pair.version : true)
       ) {
         return;
       }
 
-      this.state.set(pair.key, {
+      newStates.set(pair.key, {
         version: state ? state.version + 1 : 1,
         locked: false,
         holder: undefined,
       });
     });
+
+    this.set(newStates);
+    return { status: 'success' };
   };
 
-  lock = (uid: string, keys: string[], exp?: number) => {
+  lock = async (uid: string, keys: string[], exp?: number) => {
     const extendTheseLocks = new Set<string>();
+
+    const states = this.get(keys);
 
     // validate
     const allowLock = keys.every(key => {
-      const state = this.state.get(key);
+      const state = states.get(key);
       const clientRequestingExtension = uid === state?.holder;
       if (clientRequestingExtension) {
         extendTheseLocks.add(key);
@@ -75,15 +106,16 @@ export class InMemoryLockRepository implements ILockDAO {
     }
 
     // same client requesting lock extension; relock
+    const newStates = new Map<string, State>();
     const extendedItemTokens = Array.from(extendTheseLocks).map(key => {
       const timer = this.expiryTimers.get(key);
-      const state = this.state.get(key) as State; // we already know this state exists
+      const state = states.get(key) as State; // we already know this state exists
       if (timer) {
         // token has not yet expired, don't need to update data
         clearTimeout(timer);
       } else {
         // token has already expired, need to update data
-        this.state.set(key, {
+        newStates.set(key, {
           ...state,
           locked: true,
           holder: uid,
@@ -95,8 +127,8 @@ export class InMemoryLockRepository implements ILockDAO {
     const keysNotBeingExtended = keys.filter(key => !extendTheseLocks.has(key));
 
     const notExtendedItemTokens = keysNotBeingExtended.map(key => {
-      const version = this.state.get(key)?.version || 1;
-      this.state.set(key, {
+      const version = states.get(key)?.version || 1;
+      newStates.set(key, {
         version,
         locked: true,
         holder: uid,
@@ -112,6 +144,9 @@ export class InMemoryLockRepository implements ILockDAO {
 
       this.expiryTimers.set(key, timeout);
     });
+
+    // update states
+    this.set(newStates);
 
     return { tokens: [...extendedItemTokens, ...notExtendedItemTokens] };
   };
