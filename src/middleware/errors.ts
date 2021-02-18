@@ -10,11 +10,11 @@ export const handleCustomErrors = (
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   next: NextFunction
 ) => {
-  console.log(err);
-
-  if (err.name === 'CustomError') {
+  if (err.name === 'HandleError') {
     const { message, name, type, status } = err as HandleError;
-    return res.status(status).send(JSON.stringify({ message, name, type }));
+    return res.status(status).send({ message, name, type });
   }
+
+  // unhandled error
   return res.sendStatus(500);
 };

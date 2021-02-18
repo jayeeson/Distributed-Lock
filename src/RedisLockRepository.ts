@@ -162,7 +162,7 @@ export class RedisLockRepository implements ILockDAO {
     });
   };
 
-  lock = async (uid: string, keys: string[], exp?: number) => {
+  lock = async (uid: string, keys: string[], exp: number | undefined) => {
     const locksToExtend = new Set<string>();
 
     // set watch
@@ -225,9 +225,10 @@ export class RedisLockRepository implements ILockDAO {
 
         // set the expiry timer for all keys
         keys.forEach(key => {
+          const useExp = exp ?? this.defaultExp;
           const timeout = global.setTimeout(() => {
             this.expire(uid, [key]);
-          }, exp ?? this.defaultExp);
+          }, useExp);
 
           this.expiryTimers.set(key, timeout);
         });

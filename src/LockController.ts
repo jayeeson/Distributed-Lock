@@ -14,21 +14,27 @@ export class LockController {
   }
 
   lock = async (req: Request, res: Response) => {
-    const { uid, keys: requestedKeys, exp } = req.body as LockRequestBody;
-    const keys = Array.isArray(requestedKeys) ? requestedKeys : [requestedKeys];
+    const { uid, keys: requestedKeys, exp: requestedExp } = req.body as LockRequestBody;
 
     if (!uid) {
       throw new HandleError(400, 'key `uid` is required', ErrorTypes.BAD_REQUEST);
     }
 
-    if (!keys) {
+    if (!requestedKeys) {
       throw new HandleError(400, 'key `keys` is required', ErrorTypes.BAD_REQUEST);
     }
 
-    if (exp && Number.isNaN(exp)) {
+    const requestedExpInt = parseInt(`${requestedExp}`, 10);
+    const exp = requestedExp
+      ? Number.isNaN(requestedExpInt)
+        ? undefined
+        : requestedExpInt
+      : undefined;
+    if (requestedExp && !exp) {
       throw new HandleError(400, 'invalid key `exp`, should be a number', ErrorTypes.BAD_REQUEST);
     }
 
+    const keys = Array.isArray(requestedKeys) ? requestedKeys : [requestedKeys];
     const lock = await this.lockManager.lock(uid, keys, exp);
     res.send({ lock });
   };

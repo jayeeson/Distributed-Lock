@@ -7,7 +7,7 @@ export class HandleError extends Error {
   constructor(status: number, message: string, type: ErrorTypes) {
     super(message);
     this.status = status;
-    this.name = 'HandledError';
+    this.name = 'HandleError';
     this.type = type;
   }
 }

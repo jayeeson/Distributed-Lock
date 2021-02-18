@@ -1,5 +1,5 @@
 import express from 'express';
-import { redis } from '.';
+import { newRedisClient } from './helpers/redis';
 import { LockController } from './LockController';
 import { LockManager } from './LockManager';
 import { RedisLockRepository } from './RedisLockRepository';
@@ -7,6 +7,7 @@ import { asyncWrapper } from './utils/wrappers';
 
 const router = express.Router();
 
+export const redis = newRedisClient();
 const redisRepository = new RedisLockRepository(redis.client);
 const lockManager = new LockManager(redisRepository);
 const lockController = new LockController(lockManager);
