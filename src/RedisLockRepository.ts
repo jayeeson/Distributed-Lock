@@ -1,7 +1,7 @@
 import { RedisClient } from 'redis';
 import { boolToStr } from './helpers/boolToStr';
 import strToBool from './helpers/strToBool';
-import { ILockDAO, State, StateParams as f } from './types';
+import { ILockDAO, LockReturnType, State, StateParams as f } from './types';
 
 export class RedisLockRepository implements ILockDAO {
   redis: RedisClient;
@@ -20,6 +20,8 @@ export class RedisLockRepository implements ILockDAO {
         this.redis.multi(this.multiHset(newStateMap)).exec((err, data) => {
           if (err) {
             return reject(err);
+          } else if (data === null) {
+            return reject('another client has changed the key while trying to set key');
           }
           resolve();
         });
@@ -123,33 +125,39 @@ export class RedisLockRepository implements ILockDAO {
 
   unlock = async (uid: string, keyTokenPairs: { key: string; version: number }[]) => {
     const keys = keyTokenPairs.map(pair => pair.key);
-    const states = await this.get(keys);
-    const newStates = new Map<string, State>();
-
-    keyTokenPairs.forEach(pair => {
-      const state = states.get(pair.key);
-      if (
-        !state ||
-        state?.locked === false ||
-        state.version > pair.version ||
-        state.holder !== uid
-      ) {
-        return;
-      }
-
-      newStates.set(pair.key, {
-        version: state.version + 1,
-        locked: false,
-        holder: undefined,
-      });
-    });
-
     return new Promise<{ unlocked: string[] }>(async (resolve, reject) => {
       try {
-        await this.set(newStates);
-        resolve({ unlocked: Array.from(newStates.keys()) });
+        this.redis.watch(keys, async err => {
+          if (err) {
+            reject('failed to watch keys');
+          }
+
+          const states = await this.get(keys);
+          const newStates = new Map<string, State>();
+
+          keyTokenPairs.forEach(pair => {
+            const state = states.get(pair.key);
+            if (
+              !state ||
+              state?.locked === false ||
+              state.version > pair.version ||
+              state.holder !== uid
+            ) {
+              return;
+            }
+
+            newStates.set(pair.key, {
+              version: state.version + 1,
+              locked: false,
+              holder: undefined,
+            });
+          });
+
+          await this.set(newStates);
+          resolve({ unlocked: Array.from(newStates.keys()) });
+        });
       } catch (err) {
-        reject({ error: 'could not update states' });
+        return { error: err };
       }
     });
   };
@@ -157,68 +165,81 @@ export class RedisLockRepository implements ILockDAO {
   lock = async (uid: string, keys: string[], exp?: number) => {
     const locksToExtend = new Set<string>();
 
-    const states = await this.get(keys);
+    // set watch
+    const transaction = new Promise<LockReturnType>((resolve, reject) => {
+      this.redis.watch(keys, async err => {
+        if (err) {
+          reject({
+            error: 'failed to watch keys',
+          });
+        }
 
-    // validate
-    const allowLock = keys.every(key => {
-      const state = states.get(key);
-      const clientRequestingExtension = uid === state?.holder;
-      if (clientRequestingExtension) {
-        locksToExtend.add(key);
-      }
+        const states = await this.get(keys);
 
-      const isUnlocked = state ? !state.locked : true;
-      return isUnlocked || clientRequestingExtension;
-    });
+        // validate
+        const allowLock = keys.every(key => {
+          const state = states.get(key);
+          const clientRequestingExtension = uid === state?.holder;
+          if (clientRequestingExtension) {
+            locksToExtend.add(key);
+          }
 
-    if (!allowLock) {
-      return {
-        error: 'locked',
-      };
-    }
-
-    // same client requesting lock extension; relock
-    const newStates = new Map<string, State>();
-    const extendedItemTokens = Array.from(locksToExtend).map(key => {
-      const timer = this.expiryTimers.get(key);
-      const state = states.get(key) as State; // we already know this state exists
-      if (timer) {
-        // token has not yet expired, don't need to update data
-        clearTimeout(timer);
-      } else {
-        // token has already expired, need to update data
-        newStates.set(key, {
-          ...state,
-          locked: true,
-          holder: uid,
+          const isUnlocked = state ? !state.locked : true;
+          return isUnlocked || clientRequestingExtension;
         });
-      }
-      return { key, version: state.version };
-    });
 
-    const keysNotBeingExtended = keys.filter(key => !locksToExtend.has(key));
+        if (!allowLock) {
+          return reject('locked');
+        }
 
-    const notExtendedItemTokens = keysNotBeingExtended.map(key => {
-      const version = states.get(key)?.version || 1;
-      newStates.set(key, {
-        version,
-        locked: true,
-        holder: uid,
+        // same client requesting lock extension; relock
+        const newStates = new Map<string, State>();
+        const extendedItemTokens = Array.from(locksToExtend).map(key => {
+          const timer = this.expiryTimers.get(key);
+          const state = states.get(key) as State; // we already know this state exists
+          if (timer) {
+            // token has not yet expired, don't need to update data
+            clearTimeout(timer);
+          } else {
+            // token has already expired, need to update data
+            newStates.set(key, {
+              ...state,
+              locked: true,
+              holder: uid,
+            });
+          }
+          return { key, version: state.version };
+        });
+
+        const keysNotBeingExtended = keys.filter(key => !locksToExtend.has(key));
+
+        const notExtendedItemTokens = keysNotBeingExtended.map(key => {
+          const version = states.get(key)?.version || 1;
+          newStates.set(key, {
+            version,
+            locked: true,
+            holder: uid,
+          });
+          return { key, version };
+        });
+
+        // set the expiry timer for all keys
+        keys.forEach(key => {
+          const timeout = global.setTimeout(() => {
+            this.expire(uid, [key]);
+          }, exp ?? this.defaultExp);
+
+          this.expiryTimers.set(key, timeout);
+        });
+
+        // update states
+        await this.set(newStates);
+        resolve({ tokens: [...extendedItemTokens, ...notExtendedItemTokens] });
       });
-      return { key, version };
-    });
+    }).catch(err => ({
+      error: err.message,
+    }));
 
-    // set the expiry timer for all keys
-    keys.forEach(key => {
-      const timeout = global.setTimeout(() => {
-        this.expire(uid, [key]);
-      }, exp ?? this.defaultExp);
-
-      this.expiryTimers.set(key, timeout);
-    });
-
-    // update states
-    await this.set(newStates);
-    return { tokens: [...extendedItemTokens, ...notExtendedItemTokens] };
+    return await transaction;
   };
 }
