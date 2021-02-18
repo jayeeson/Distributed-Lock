@@ -1,4 +1,4 @@
-import { ILockDAO, State, StateParams } from './types';
+import { ILockDAO, State } from './types';
 
 export class InMemoryLockRepository implements ILockDAO {
   private state = new Map<string, State>();
@@ -75,7 +75,9 @@ export class InMemoryLockRepository implements ILockDAO {
     });
 
     this.set(newStates);
-    return { status: 'success' };
+
+    const unlocked = Array.from(newStates.keys());
+    return { unlocked };
   };
 
   lock = async (uid: string, keys: string[], exp?: number) => {

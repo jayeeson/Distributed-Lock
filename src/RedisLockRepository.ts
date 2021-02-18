@@ -147,18 +147,18 @@ export class RedisLockRepository implements ILockDAO {
       });
     });
 
-    return new Promise<{ status: string }>(async (resolve, reject) => {
+    return new Promise<{ unlocked: string[] }>(async (resolve, reject) => {
       try {
         await this.set(newStates);
-        resolve({ status: 'success' });
+        resolve({ unlocked: Array.from(newStates.keys()) });
       } catch (err) {
-        reject({ status: 'error' });
+        reject({ error: 'could not update states' });
       }
     });
   };
 
   lock = async (uid: string, keys: string[], exp?: number) => {
-    const extendTheseLocks = new Set<string>();
+    const locksToExtend = new Set<string>();
 
     const states = await this.get(keys);
 
@@ -167,7 +167,7 @@ export class RedisLockRepository implements ILockDAO {
       const state = states.get(key);
       const clientRequestingExtension = uid === state?.holder;
       if (clientRequestingExtension) {
-        extendTheseLocks.add(key);
+        locksToExtend.add(key);
       }
 
       const isUnlocked = state ? !state.locked : true;
@@ -182,7 +182,7 @@ export class RedisLockRepository implements ILockDAO {
 
     // same client requesting lock extension; relock
     const newStates = new Map<string, State>();
-    const extendedItemTokens = Array.from(extendTheseLocks).map(key => {
+    const extendedItemTokens = Array.from(locksToExtend).map(key => {
       const timer = this.expiryTimers.get(key);
       const state = states.get(key) as State; // we already know this state exists
       if (timer) {
@@ -199,7 +199,7 @@ export class RedisLockRepository implements ILockDAO {
       return { key, version: state.version };
     });
 
-    const keysNotBeingExtended = keys.filter(key => !extendTheseLocks.has(key));
+    const keysNotBeingExtended = keys.filter(key => !locksToExtend.has(key));
 
     const notExtendedItemTokens = keysNotBeingExtended.map(key => {
       const version = states.get(key)?.version || 1;

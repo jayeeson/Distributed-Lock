@@ -21,6 +21,22 @@
         "node_modules/**/*.js",
         "<node_internals>/**"
       ],
-    }
-  ]
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug index.ts",
+      "runtimeArgs": [
+        "--nolazy",
+        "-r", "ts-node/register",
+      ],
+      "args": [
+        "${workspaceRoot}/src/index.ts",
+      ],
+      "sourceMaps": true,
+      "cwd": "${workspaceRoot}",
+      // "internalConsoleOptions": "openOnSessionStart",
+      "skipFiles": ["<node_internals>/**", "node_modules/**"]
+    },
+  ],
 }

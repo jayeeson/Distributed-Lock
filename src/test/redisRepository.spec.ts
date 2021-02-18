@@ -25,6 +25,10 @@ describe('Redis Lock Respository', () => {
       });
     });
 
+    if (!keys.length) {
+      return;
+    }
+
     await new Promise<number>((resolve, reject) => {
       redis.del(keys, (err, reply) => {
         if (err) {
@@ -228,19 +232,6 @@ describe('Redis Lock Respository', () => {
 
       const check = lockManager.check(keys);
       return check.should.eventually.have.property('locked').that.equals(false);
-    });
-
-    it('testing throws', async () => {
-      const promise = new Promise<string>((resolve, reject) => {
-        if (1) {
-          reject('failed');
-        }
-        resolve('ok');
-      });
-
-      const pro = await promise;
-
-      return pro.should.eventually.equal('ok');
     });
   });
 });
