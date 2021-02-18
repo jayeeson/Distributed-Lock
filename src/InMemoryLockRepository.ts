@@ -50,20 +50,14 @@ export class InMemoryLockRepository implements ILockDAO {
     return Promise.resolve({ locked });
   };
 
-  unlock = async (
-    uid: string,
-    keyTokenPairs: { key: string; version: number }[]
-  ) => {
+  unlock = async (uid: string, keyTokenPairs: { key: string; version: number }[]) => {
     const keys = keyTokenPairs.map(pair => pair.key);
     const states = this.get(keys);
     const newStates = new Map<string, State>();
 
     keyTokenPairs.forEach(pair => {
       const state = states.get(pair.key);
-      if (
-        state?.locked === false ||
-        (state ? state.version > pair.version : true)
-      ) {
+      if (state?.locked === false || (state ? state.version > pair.version : true)) {
         return;
       }
 

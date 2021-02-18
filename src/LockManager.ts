@@ -11,10 +11,7 @@ export class LockManager implements ILockDAO {
     return this.repository.lock(uid, keys, exp);
   };
 
-  unlock = async (
-    uid: string,
-    keyTokenPairs: { key: string; version: number }[]
-  ) => {
+  unlock = async (uid: string, keyTokenPairs: { key: string; version: number }[]) => {
     return this.repository.unlock(uid, keyTokenPairs);
   };
 

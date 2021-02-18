@@ -1,12 +1,7 @@
 import { Request, Response } from 'express';
 import { HandleError } from './HandleError';
 import { LockManager } from './LockManager';
-import {
-  CheckRequestBody,
-  ErrorTypes,
-  LockRequestBody,
-  UnlockRequestBody,
-} from './types';
+import { CheckRequestBody, ErrorTypes, LockRequestBody, UnlockRequestBody } from './types';
 
 const isValidKeyStructure = (keys: { key: string; version: number }[]) =>
   keys.every(item => item.key !== undefined && item.version !== undefined);
@@ -23,27 +18,15 @@ export class LockController {
     const keys = Array.isArray(requestedKeys) ? requestedKeys : [requestedKeys];
 
     if (!uid) {
-      throw new HandleError(
-        400,
-        'key `uid` is required',
-        ErrorTypes.BAD_REQUEST
-      );
+      throw new HandleError(400, 'key `uid` is required', ErrorTypes.BAD_REQUEST);
     }
 
     if (!keys) {
-      throw new HandleError(
-        400,
-        'key `keys` is required',
-        ErrorTypes.BAD_REQUEST
-      );
+      throw new HandleError(400, 'key `keys` is required', ErrorTypes.BAD_REQUEST);
     }
 
     if (exp && Number.isNaN(exp)) {
-      throw new HandleError(
-        400,
-        'invalid key `exp`, should be a number',
-        ErrorTypes.BAD_REQUEST
-      );
+      throw new HandleError(400, 'invalid key `exp`, should be a number', ErrorTypes.BAD_REQUEST);
     }
 
     const lock = await this.lockManager.lock(uid, keys, exp);
@@ -54,19 +37,11 @@ export class LockController {
     const { uid, keys } = req.body as UnlockRequestBody;
 
     if (!uid) {
-      throw new HandleError(
-        400,
-        'key `uid` is required',
-        ErrorTypes.BAD_REQUEST
-      );
+      throw new HandleError(400, 'key `uid` is required', ErrorTypes.BAD_REQUEST);
     }
 
     if (!keys) {
-      throw new HandleError(
-        400,
-        'key `keys` is required',
-        ErrorTypes.BAD_REQUEST
-      );
+      throw new HandleError(400, 'key `keys` is required', ErrorTypes.BAD_REQUEST);
     } else if (!isValidKeyStructure(keys)) {
       throw new HandleError(
         400,
@@ -83,11 +58,7 @@ export class LockController {
     const { keys: requestedKeys } = req.body as CheckRequestBody;
 
     if (!requestedKeys) {
-      throw new HandleError(
-        400,
-        'key `keys` is required',
-        ErrorTypes.BAD_REQUEST
-      );
+      throw new HandleError(400, 'key `keys` is required', ErrorTypes.BAD_REQUEST);
     }
 
     const keys = Array.isArray(requestedKeys) ? requestedKeys : [requestedKeys];

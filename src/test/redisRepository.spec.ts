@@ -70,19 +70,14 @@ describe('Redis Lock Respository', () => {
         return assert.fail('error locking');
       }
 
-      const lockClient2 = lockManager.lock('2', [
-        ...key1,
-        redisPrefix + 'key2',
-      ]);
+      const lockClient2 = lockManager.lock('2', [...key1, redisPrefix + 'key2']);
 
       return lockClient2.should.eventually.have.property('error');
     });
 
     it('should extend the lock duration if the same lockholder requests a lock', async () => {
       const getExpiryTimer = () =>
-        (lockManager.repository as RedisLockRepository).expiryTimers.get(
-          key[0]
-        );
+        (lockManager.repository as RedisLockRepository).expiryTimers.get(key[0]);
 
       const key = [redisPrefix + 'key1'];
 
@@ -197,9 +192,9 @@ describe('Redis Lock Respository', () => {
 
       const isLockedAfterExpiry = new Promise<boolean | undefined>(resolve => {
         global.setTimeout(async () => {
-          const keyState = (
-            await (lockManager.repository as RedisLockRepository).get(keys)
-          ).get(keys[0])?.locked;
+          const keyState = (await (lockManager.repository as RedisLockRepository).get(keys)).get(
+            keys[0]
+          )?.locked;
           resolve(keyState);
         }, waitTillExpTime);
       });
@@ -215,9 +210,7 @@ describe('Redis Lock Respository', () => {
       await lockManager.lock('1', keys);
 
       const check = lockManager.check(keys);
-      return expect(check)
-        .to.eventually.have.property('locked')
-        .which.equals(true);
+      return expect(check).to.eventually.have.property('locked').which.equals(true);
     });
 
     it('should return unlocked when unlocked', async () => {

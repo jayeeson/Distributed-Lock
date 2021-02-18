@@ -121,10 +121,7 @@ export class RedisLockRepository implements ILockDAO {
     return { locked: anyLocked };
   };
 
-  unlock = async (
-    uid: string,
-    keyTokenPairs: { key: string; version: number }[]
-  ) => {
+  unlock = async (uid: string, keyTokenPairs: { key: string; version: number }[]) => {
     const keys = keyTokenPairs.map(pair => pair.key);
     const states = await this.get(keys);
     const newStates = new Map<string, State>();

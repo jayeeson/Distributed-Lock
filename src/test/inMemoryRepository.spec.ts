@@ -71,9 +71,7 @@ describe('In Memory Lock Repository', () => {
       const client1Version = lockClient1.tokens[0].version;
       const client2Version = lockClient2.tokens?.[0].version;
 
-      expect(
-        client1Version && client2Version && client2Version > client1Version
-      ).to.eql(true);
+      expect(client1Version && client2Version && client2Version > client1Version).to.eql(true);
     });
 
     it('should increment version if same client requests resource after initial request has expired', async () => {
@@ -142,9 +140,8 @@ describe('In Memory Lock Repository', () => {
 
       const promise = new Promise<boolean | undefined>(resolve => {
         setTimeout(() => {
-          const keyState = (lockManager.repository as InMemoryLockRepository)
-            .get(keys)
-            .get(keys[0])?.locked;
+          const keyState = (lockManager.repository as InMemoryLockRepository).get(keys).get(keys[0])
+            ?.locked;
           resolve(keyState);
         }, waitTillExpiryTime);
       });
