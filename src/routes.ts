@@ -1,19 +1,35 @@
 import express from 'express';
-import { newRedisClient } from './helpers/redis';
 import { LockController } from './LockController';
 import { LockManager } from './LockManager';
 import { RedisLockRepository } from './RedisLockRepository';
 import { asyncWrapper } from './utils/wrappers';
+import { InMemoryLockRepository } from './InMemoryLockRepository';
+import { RedisClient } from 'redis';
 
-const router = express.Router();
+export default (redis: RedisClient | boolean = false) => {
+  const router = express.Router();
 
-export const redis = newRedisClient();
-const redisRepository = new RedisLockRepository(redis.client);
-const lockManager = new LockManager(redisRepository);
-const lockController = new LockController(lockManager);
+  const initLockController = (): LockController => {
+    if (!redis) {
+      const repository = new InMemoryLockRepository();
+      const lockManager = new LockManager(repository);
+      return new LockController(lockManager);
+    }
 
-router.post('/lock', asyncWrapper(lockController.lock));
-router.post('/unlock', asyncWrapper(lockController.unlock));
-router.post('/check', asyncWrapper(lockController.check));
+    if (redis === true) {
+      throw new Error('must pass redis client to routes if not using --no-redis option');
+    }
 
-export default router;
+    const repository = new RedisLockRepository(redis);
+    const lockManager = new LockManager(repository);
+    return new LockController(lockManager);
+  };
+
+  const lockController = initLockController();
+
+  router.post('/lock', asyncWrapper(lockController.lock));
+  router.post('/unlock', asyncWrapper(lockController.unlock));
+  router.post('/check', asyncWrapper(lockController.check));
+
+  return router;
+};

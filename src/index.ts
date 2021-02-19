@@ -1,25 +1,37 @@
-import express from 'express';
+import express, { Application } from 'express';
 import dotenv from 'dotenv';
 import bodyParser from 'body-parser';
 import { getPort } from './helpers/port';
 import lockRoutes from './routes';
 import { handleCustomErrors } from './middleware/errors';
+import { RedisClient } from 'redis';
+import { cliOptions } from './helpers/commander';
+import { newRedisClient } from './helpers/redis';
 
 dotenv.config();
-
-export const app = express();
-app.use(bodyParser.urlencoded({ extended: false }));
-app.use(bodyParser.json());
-
-app.use('/api', lockRoutes);
-app.get('/ping', (req, res) => {
-  res.send('pong');
-});
-app.use(handleCustomErrors);
-
-const hostname = process.env.HOST ?? 'localhost';
+const host = process.env.HOST ?? 'localhost';
 const port = getPort() ?? 3000;
 
-app.listen(port, hostname, () => {
-  console.log(`Running server on port ${port}`);
-});
+export const createAppContainer = (redis?: RedisClient) => {
+  const app: Application = express();
+  app.use(bodyParser.urlencoded({ extended: false }));
+  app.use(bodyParser.json());
+
+  app.use('/api', lockRoutes(redis));
+  app.get('/ping', (req, res) => {
+    res.send('pong');
+  });
+  app.use(handleCustomErrors);
+
+  app.listen(port, host);
+
+  return { app };
+};
+
+const init = () => {
+  const redis = cliOptions.redis === false ? undefined : newRedisClient().client;
+  createAppContainer(redis);
+  console.log(`creating app on ${host}:${port}`);
+};
+
+init();

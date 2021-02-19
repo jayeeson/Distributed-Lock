@@ -21,6 +21,7 @@
         "node_modules/**/*.js",
         "<node_internals>/**"
       ],
+      "env": {"NODE_ENV": "TEST"},
     },
     {
       "type": "node",

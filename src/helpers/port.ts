@@ -1,11 +1,7 @@
-import { Command } from 'commander';
-
-const program = new Command();
-program.option('p, --port', 'specify launch port (overrides .env)');
-const options = program.opts();
+import { cliOptions } from './commander';
 
 export function getPort(): number | undefined {
-  const portArg = parseInt(`${options.port}`, 10);
+  const portArg = parseInt(`${cliOptions.port}`, 10);
   if (!isNaN(portArg) && portArg > 0) {
     return portArg;
   }

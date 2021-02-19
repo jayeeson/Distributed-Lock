@@ -4,13 +4,12 @@ import { describe, beforeEach, it } from 'mocha';
 import { LockManager } from '../LockManager';
 import { RedisLockRepository } from '../RedisLockRepository';
 import { newRedisClient } from '../helpers/redis';
-import { RedisClient } from 'redis';
 
 chai.use(chaiAsPromised);
 chai.should();
 
 const redisPrefix = 'test:';
-const { client: redis }: { client: RedisClient } = newRedisClient();
+const redis = newRedisClient().client;
 const lockRepository = new RedisLockRepository(redis);
 const lockManager = new LockManager(lockRepository);
 
