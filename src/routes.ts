@@ -5,14 +5,18 @@ import { RedisLockRepository } from './RedisLockRepository';
 import { asyncWrapper } from './utils/wrappers';
 import { InMemoryLockRepository } from './InMemoryLockRepository';
 import { RedisClient } from 'redis';
+import { cliOptions } from './helpers/commander';
+import getDefaultExpiry from './helpers/defaultExpiry';
 
 export default (redis: RedisClient | boolean = false) => {
   const router = express.Router();
 
   const initLockController = (): LockController => {
+    const exp = getDefaultExpiry();
+
     if (!redis) {
-      const repository = new InMemoryLockRepository();
-      const lockManager = new LockManager(repository);
+      const inMemoryRepository = new InMemoryLockRepository(exp);
+      const lockManager = new LockManager(inMemoryRepository);
       return new LockController(lockManager);
     }
 
@@ -20,8 +24,8 @@ export default (redis: RedisClient | boolean = false) => {
       throw new Error('must pass redis client to routes if not using --no-redis option');
     }
 
-    const repository = new RedisLockRepository(redis);
-    const lockManager = new LockManager(repository);
+    const redisRepository = new RedisLockRepository(redis, exp);
+    const lockManager = new LockManager(redisRepository);
     return new LockController(lockManager);
   };
 

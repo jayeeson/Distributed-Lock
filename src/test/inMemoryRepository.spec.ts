@@ -81,7 +81,7 @@ describe('In Memory Lock Repository', () => {
 
       await lockManager.lock(uid, key, exp);
 
-      const secondLock = new Promise<LockReturnType>((resolve, reject) => {
+      const secondLock = new Promise<LockReturnType>(resolve => {
         setTimeout(async () => {
           const lockClient1Again = await lockManager.lock(uid, key, exp);
           resolve(lockClient1Again);

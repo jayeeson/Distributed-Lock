@@ -123,8 +123,8 @@ export class RedisLockRepository implements ILockDAO {
     return { locked: anyLocked };
   };
 
-  unlock = async (uid: string, keyTokenPairs: { key: string; version: number }[]) => {
-    const keys = keyTokenPairs.map(pair => pair.key);
+  unlock = async (uid: string, tokens: { key: string; version: number }[]) => {
+    const keys = tokens.map(token => token.key);
     return new Promise<{ unlocked: string[] }>(async (resolve, reject) => {
       try {
         this.redis.watch(keys, async err => {
@@ -135,18 +135,18 @@ export class RedisLockRepository implements ILockDAO {
           const states = await this.get(keys);
           const newStates = new Map<string, State>();
 
-          keyTokenPairs.forEach(pair => {
-            const state = states.get(pair.key);
+          tokens.forEach(token => {
+            const state = states.get(token.key);
             if (
               !state ||
               state?.locked === false ||
-              state.version > pair.version ||
+              state.version > token.version ||
               state.holder !== uid
             ) {
               return;
             }
 
-            newStates.set(pair.key, {
+            newStates.set(token.key, {
               version: state.version + 1,
               locked: false,
               holder: undefined,

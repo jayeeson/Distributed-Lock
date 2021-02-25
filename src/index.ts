@@ -9,7 +9,7 @@ import { cliOptions } from './helpers/commander';
 import { newRedisClient } from './helpers/redis';
 
 dotenv.config();
-const host = process.env.HOST ?? 'localhost';
+const host = cliOptions.host ?? process.env.HOST ?? 'localhost';
 const port = getPort() ?? 3000;
 
 export const createAppContainer = (redis?: RedisClient) => {
@@ -18,9 +18,7 @@ export const createAppContainer = (redis?: RedisClient) => {
   app.use(bodyParser.json());
 
   app.use('/api', lockRoutes(redis));
-  app.get('/ping', (req, res) => {
-    res.send('pong');
-  });
+  app.get('/ping', (req, res) => res.send('pong'));
   app.use(handleCustomErrors);
 
   app.listen(port, host);

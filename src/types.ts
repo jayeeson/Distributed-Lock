@@ -18,7 +18,7 @@ export interface ILockDAO {
   ) => Promise<{ error?: any; tokens?: { key: string; version: number }[] }>;
   unlock: (
     uid: string,
-    keyTokenPairs: { key: string; version: number }[]
+    tokens: { key: string; version: number }[]
   ) => Promise<{ unlocked: string[] }>;
   check: (keys: string[]) => Promise<{ locked: boolean }>;
 }

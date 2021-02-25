@@ -3,8 +3,6 @@ import { describe, it, beforeEach } from 'mocha';
 import chaiHttp from 'chai-http';
 import { createAppContainer } from '..';
 import { ErrorTypes, LockRequestBody } from '../types';
-import { InMemoryLockRepository } from '../InMemoryLockRepository';
-import { LockManager } from '../LockManager';
 import { newRedisClient } from '../helpers/redis';
 
 chai.should();
